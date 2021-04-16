@@ -15,6 +15,7 @@ using CryptoExchange.Net.Objects;
 using Newtonsoft.Json;
 using OpenCryptShot.Discord;
 using System.Threading;
+using System.Diagnostics;
 
 namespace OpenCryptShot
 {
@@ -84,8 +85,20 @@ namespace OpenCryptShot
 
             while (true)
             {
-                //Wait for symbol input
-                Utilities.Write(ConsoleColor.Yellow, "Input symbol or Discord channel ID:");
+                int closet3 = 0;
+                Thread t4 = new Thread(FakeThread);
+                t4.Start();
+                void FakeThread()
+                {
+                    while (closet3 == 0)
+                    {
+                        client.Spot.Order.PlaceOrder("ETHBTC", OrderSide.Buy, OrderType.Market, null, 0);
+                        // Utilities.Write(ConsoleColor.Green, $"test order sent");
+                        Thread.Sleep(100000);
+                    }
+                }
+                    //Wait for symbol input
+                    Utilities.Write(ConsoleColor.Yellow, "Input symbol or Discord channel ID:");
                 Console.ForegroundColor = ConsoleColor.White;
                 string symbol = Console.ReadLine();
 
@@ -107,6 +120,7 @@ namespace OpenCryptShot
                 if (string.IsNullOrEmpty(symbol))
                     return;
 
+                closet3 = 1;
                 //Try to execute the order
                 ExecuteOrder(symbol, config.quantity, config.takeProfitRate, config.stopLossRate, config.limitPriceRate);
             }
@@ -137,44 +151,35 @@ namespace OpenCryptShot
         private static void ExecuteOrder(string symbol, decimal quantity, decimal takeProfitRate, decimal stopLossRate, decimal limitPriceRate)
         {
             string pair = symbol.ToUpper() + "BTC";
-            WebCallResult<BinanceBookPrice> priceResult = client.Spot.Market.GetBookPrice(pair);
-            if (priceResult.Success)
-            {
-                Utilities.Write(ConsoleColor.Green, $"Price for {pair} is {priceResult.Data.BestAskPrice}");
-                
-                BinanceSymbol symbolInfo = exchangeInfo.Data.Symbols.FirstOrDefault(s => s.QuoteAsset == "BTC" && s.BaseAsset == symbol.ToUpper());
-                if (symbolInfo == null)
-                {
-                    Utilities.Write(ConsoleColor.Red, $"ERROR! Could not get symbol informations.");
-                    return;
-                }
-
-                int symbolPrecision = 1;
-                decimal ticksize = symbolInfo.PriceFilter.TickSize;
-                while ((ticksize = ticksize * 10) < 1)
-                    ++symbolPrecision;
-                Utilities.Write(ConsoleColor.Green, $"Asset precision: {symbolPrecision}");
-                
-                //Place Market Order
+            Stopwatch stopWatch = new Stopwatch();
+            stopWatch.Start();
                 WebCallResult<BinancePlacedOrder> order = client.Spot.Order.PlaceOrder(pair, OrderSide.Buy, OrderType.Market, null, quantity);
-                if (!order.Success)
-                {
-                    Utilities.Write(ConsoleColor.Red, $"ERROR! Could not place the Market order. Error code: " + order.Error?.Message);
-                    return;
-                } 
-
-                //Get the filled order average price
+                stopWatch.Stop();
+                var timestamp = DateTime.Now.ToFileTime();
+                TimeSpan ts = stopWatch.Elapsed;
+                decimal orderQuantity = order.Data.QuantityFilled;
                 decimal paidPrice = 0;
                 if (order.Data.Fills != null)
                 {
                     paidPrice = order.Data.Fills.Average(trade => trade.Price);
                 }
 
-                decimal orderQuantity = order.Data.QuantityFilled;
+                string elapsedTime = String.Format("{0:00}:{1:00}:{2:00}.{3:000}",
+                    ts.Hours, ts.Minutes, ts.Seconds,
+                    ts.Milliseconds);
+                Utilities.Write(ConsoleColor.Green, $"Order submitted and accepted, Got: {orderQuantity} coins from {pair} at {paidPrice}, time: + {elapsedTime} ms");
+                BinanceSymbol symbolInfo = exchangeInfo.Data.Symbols.FirstOrDefault(s => s.QuoteAsset == "BTC" && s.BaseAsset == symbol);
+                if (symbolInfo == null)
+                {
+                    Utilities.Write(ConsoleColor.Red, $"ERROR! Could not get symbol informations.");
+                    return;
+                }
+                int symbolPrecision = 1;
+                decimal ticksize = symbolInfo.PriceFilter.TickSize;
+                while ((ticksize = ticksize * 10) < 1)
+                    ++symbolPrecision;
 
-                Utilities.Write(ConsoleColor.Green, $"Order submitted, Got: {orderQuantity} coins from {pair} at {paidPrice}");
-
-                decimal sellPrice = Math.Round(paidPrice * stopLossRate, symbolPrecision);
+            decimal sellPrice = Math.Round(paidPrice * stopLossRate, symbolPrecision);
                 decimal triggerPrice = Math.Round(paidPrice * limitPriceRate, symbolPrecision);
                 decimal limit = Math.Round(paidPrice * takeProfitRate, symbolPrecision);
 
@@ -186,11 +191,6 @@ namespace OpenCryptShot
                 }
 
                 Utilities.Write(ConsoleColor.Green, $"OCO Order submitted, sell price: {limit}, stop price: {triggerPrice}, stop limit price: {sellPrice}");
-            }
-            else
-            {
-                Utilities.Write(ConsoleColor.Red, $"ERROR! Could not get price for pair: {pair}. Error code: {priceResult.Error?.Message}");
-            }
         }
 
         /// <summary>
